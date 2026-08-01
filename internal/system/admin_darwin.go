@@ -4,13 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
-
-// IsRunningAsAdmin checks if the process is running with root privileges on macOS.
-func IsRunningAsAdmin() bool {
-	return os.Geteuid() == 0
-}
 
 // AppDataDir returns the DirectLink config directory on macOS.
 func AppDataDir() string {
@@ -77,9 +71,4 @@ func GetExePath() (string, error) {
 		return "", err
 	}
 	return exe, nil
-}
-
-// init: ensure config dir exists
-func init() {
-	_ = strings.TrimSpace // keep import
 }

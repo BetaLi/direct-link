@@ -17,21 +17,23 @@ import (
 
 // ProxyServer is a local HTTP CONNECT tunnel proxy that routes target domains to optimal IPs.
 type ProxyServer struct {
-	mu             sync.RWMutex
-	listener       net.Listener
-	port           int
-	prober         *prober.Prober
-	enabledDomains map[string]bool
-	relayConfig    *config.RelayConfig
-	socksDialer    proxy.Dialer
-	closed         bool
+	mu              sync.RWMutex
+	listener        net.Listener
+	port            int
+	prober          *prober.Prober
+	enabledDomains  map[string]bool
+	relayConfig     *config.RelayConfig
+	socksDialer     proxy.Dialer
+	closed          bool
+	directFailCache map[string]time.Time // domain → last direct-connect failure time
 }
 
 func NewProxyServer(port int, prober *prober.Prober) *ProxyServer {
 	return &ProxyServer{
-		port:           port,
-		prober:         prober,
-		enabledDomains: make(map[string]bool),
+		port:            port,
+		prober:          prober,
+		enabledDomains:  make(map[string]bool),
+		directFailCache: make(map[string]time.Time),
 	}
 }
 
@@ -66,6 +68,31 @@ func (p *ProxyServer) SetEnabledDomains(domains []string) {
 	for _, d := range domains {
 		p.enabledDomains[d] = true
 	}
+}
+
+// shouldTryDirect returns true if the domain should attempt a direct connection.
+// Domains that recently failed direct-connect are skipped for 5 minutes to avoid
+// repeated timeout delays on known-blocked domains.
+func (p *ProxyServer) shouldTryDirect(domain string) bool {
+	p.mu.RLock()
+	failTime, exists := p.directFailCache[domain]
+	p.mu.RUnlock()
+	if !exists {
+		return true
+	}
+	return time.Since(failTime) > 5*time.Minute
+}
+
+func (p *ProxyServer) markDirectFailed(domain string) {
+	p.mu.Lock()
+	p.directFailCache[domain] = time.Now()
+	p.mu.Unlock()
+}
+
+func (p *ProxyServer) markDirectOK(domain string) {
+	p.mu.Lock()
+	delete(p.directFailCache, domain)
+	p.mu.Unlock()
 }
 
 // Start begins listening for proxy connections.
@@ -173,74 +200,66 @@ func (p *ProxyServer) handleConnect(conn net.Conn, reader *bufio.Reader, request
 	var upstream net.Conn
 	var err error
 
-	if !isAccelerated {
-		// Non-accelerated domain: direct dial only, no relay
+	if !isAccelerated || socksDialer == nil {
+		// Non-accelerated domain or no relay configured: direct dial
 		upstream, err = net.DialTimeout("tcp", hostPort, 10*time.Second)
 		if err != nil {
 			conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 			return
 		}
-	} else if socksDialer != nil {
-		// Accelerated domain with relay: try SOCKS5 with known-good IP first
-		// Use known IPs from config rules to bypass VPS DNS pollution
-		// (VPS DNS may resolve github.com to blocked Azure IPs too)
-		knownIPs := config.GetKnownIPs(domain)
-		var upstreamConnected bool
-
-		for _, knownIP := range knownIPs {
-			relayTarget := fmt.Sprintf("%s:%s", knownIP, port)
-			logger.Debug("SOCKS5 中转 (已知IP): %s → %s", domain, relayTarget)
-			upstream, err = socksDialer.Dial("tcp", relayTarget)
-			if err == nil {
-				logger.Debug("SOCKS5 中转成功: %s @ %s", domain, knownIP)
-				upstreamConnected = true
-				break
-			}
-			logger.Debug("SOCKS5 中转失败 %s @ %s: %v", domain, knownIP, err)
-		}
-
-		if !upstreamConnected {
-			// All known IPs failed — try domain name as last resort
-			logger.Debug("已知IP全部失败，尝试域名中转 %s...", hostPort)
-			upstream, err = socksDialer.Dial("tcp", hostPort)
-			if err == nil {
-				upstreamConnected = true
-				logger.Debug("域名中转成功: %s", domain)
-			}
-		}
-
-		if !upstreamConnected {
-			// SOCKS5 fully failed — try direct with prober's best IP
-			logger.Debug("SOCKS5 全部失败，尝试直连 %s...", domain)
-			bestIP := ""
-			if p.prober != nil {
-				bestIP = p.prober.GetBestIP(domain)
-			}
-			if bestIP != "" {
-				upstream, err = net.DialTimeout("tcp", fmt.Sprintf("%s:%s", bestIP, port), 10*time.Second)
-			} else {
-				upstream, err = net.DialTimeout("tcp", hostPort, 10*time.Second)
-			}
-			if err != nil {
-				logger.Debug("直连也失败 %s: %v", domain, err)
-				conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
-				return
-			}
-			logger.Debug("直连成功: %s", domain)
-		}
 	} else {
-		// Accelerated domain without relay: direct dial with best IP
-		targetAddr := hostPort
-		if p.prober != nil {
-			bestIP := p.prober.GetBestIP(domain)
-			if bestIP != "" {
-				targetAddr = fmt.Sprintf("%s:%s", bestIP, port)
+		// Accelerated domain with relay: try direct first, fall back to SOCKS5
+		if p.shouldTryDirect(domain) {
+			upstream, err = net.DialTimeout("tcp", hostPort, 3*time.Second)
+			if err == nil {
+				p.markDirectOK(domain)
+				logger.Debug("直连成功: %s", domain)
+			} else {
+				p.markDirectFailed(domain)
+				logger.Debug("直连失败，切换中转: %s", domain)
+				upstream = nil
 			}
 		}
-		upstream, err = net.DialTimeout("tcp", targetAddr, 10*time.Second)
-		if err != nil {
-			conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
-			return
+
+		if upstream == nil {
+			// Direct failed or cached as blocked — use SOCKS5 relay with known IPs
+			knownIPs := config.GetKnownIPs(domain)
+			var upstreamConnected bool
+
+			for _, knownIP := range knownIPs {
+				relayTarget := fmt.Sprintf("%s:%s", knownIP, port)
+				logger.Debug("SOCKS5 中转 (已知IP): %s → %s", domain, relayTarget)
+				upstream, err = socksDialer.Dial("tcp", relayTarget)
+				if err == nil {
+					upstreamConnected = true
+					break
+				}
+			}
+
+			if !upstreamConnected {
+				// All known IPs failed — try domain name via relay
+				upstream, err = socksDialer.Dial("tcp", hostPort)
+				if err == nil {
+					upstreamConnected = true
+				}
+			}
+
+			if !upstreamConnected {
+				// SOCKS5 fully failed — last resort: direct with prober's best IP
+				bestIP := ""
+				if p.prober != nil {
+					bestIP = p.prober.GetBestIP(domain)
+				}
+				if bestIP != "" {
+					upstream, err = net.DialTimeout("tcp", fmt.Sprintf("%s:%s", bestIP, port), 10*time.Second)
+				} else {
+					upstream, err = net.DialTimeout("tcp", hostPort, 10*time.Second)
+				}
+				if err != nil {
+					conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+					return
+				}
+			}
 		}
 	}
 	defer upstream.Close()
@@ -295,22 +314,12 @@ func (p *ProxyServer) handleHTTP(conn net.Conn, reader *bufio.Reader, requestLin
 		return
 	}
 
-	domain, port := splitHostPort(host)
+	_, port := splitHostPort(host)
 	if port == "" {
 		port = "80"
 	}
 
 	targetAddr := fmt.Sprintf("%s:%s", host, port)
-	p.mu.RLock()
-	isAccelerated := p.enabledDomains[domain]
-	p.mu.RUnlock()
-
-	if isAccelerated && p.prober != nil {
-		bestIP := p.prober.GetBestIP(domain)
-		if bestIP != "" {
-			targetAddr = fmt.Sprintf("%s:%s", bestIP, port)
-		}
-	}
 
 	upstream, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
 	if err != nil {

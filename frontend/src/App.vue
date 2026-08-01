@@ -114,7 +114,6 @@
                 <span class="knob" :class="autoStart ? 'knob-on' : 'knob-off'"></span>
               </button>
             </div>
-            <button @click="cleanHosts" class="setting-action">清理 hosts 文件</button>
             <button @click="quit" class="setting-quit">退出程序</button>
           </div>
         </div>
@@ -125,7 +124,7 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed, onMounted, onUnmounted } from 'vue'
-import { GetStatus, GetLog, Start, Stop, ToggleSite, Reprobe, SetAutoStart, GetAutoStart, Minimize, Quit, CleanHosts } from './wailsjs/go/main/App'
+import { GetStatus, GetLog, Start, Stop, ToggleSite, Reprobe, SetAutoStart, GetAutoStart, Minimize, Quit } from './wailsjs/go/main/App'
 import { EventsOn } from './wailsjs/runtime/runtime'
 
 interface SiteStatus { id:string; name:string; icon:string; enabled:boolean; bestIP:string; latency:number; domains:number; connected:number }
@@ -173,15 +172,13 @@ export default defineComponent({
       showSettings.value = !showSettings.value
       if (showSettings.value) { try { autoStart.value = await GetAutoStart() } catch {} }
     }
-    async function cleanHosts() { try { await CleanHosts() } catch {} }
-
     function siteIcon(id:string) { return id==='steam'?'S':id==='github'?'G':'?' }
     function formatTime(t:string) { try { return new Date(t).toLocaleTimeString('zh-CN',{hour12:false}) } catch { return '' } }
     function latencyColor(ms:number) { return ms<100?'latency-good':ms<300?'latency-mid':'latency-bad' }
 
     const totalConnected = computed(() => sites.value.reduce((s,x)=>s+x.connected,0))
     const totalDomains = computed(() => sites.value.reduce((s,x)=>s+x.domains,0))
-    const modeLabel = computed(() => currentMode.value==='hosts'?'Hosts 直连':currentMode.value==='proxy'?'代理模式':'')
+    const modeLabel = computed(() => currentMode.value==='proxy'?'代理模式':'')
     const statusText = computed(() => isRunning.value ? '加速运行中' : '加速器已停止')
 
     onMounted(() => {
@@ -193,8 +190,7 @@ export default defineComponent({
 
     return {
       isRunning, isLoading, sites, logEntries, showLog, showSettings, autoStart,
-      toggleAccelerate, toggleSite, reprobe, toggleAutostart, minimize, quit, toggleSettings, cleanHosts,
-      siteIcon, formatTime, latencyColor,
+      toggleAccelerate, toggleSite, reprobe, toggleAutostart, minimize, quit, toggleSettings,      siteIcon, formatTime, latencyColor,
       totalConnected, totalDomains, modeLabel, statusText,
     }
   }

@@ -8,12 +8,6 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-// IsRunningAsAdmin checks if the current process has admin privileges.
-func IsRunningAsAdmin() bool {
-	_, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`, registry.QUERY_VALUE|registry.SET_VALUE)
-	return err == nil
-}
-
 // AppDataDir returns the DirectLink AppData directory.
 func AppDataDir() string {
 	dir := filepath.Join(os.Getenv("APPDATA"), "DirectLink")

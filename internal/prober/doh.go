@@ -2,7 +2,6 @@ package prober
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -154,42 +153,6 @@ func (p *Prober) dohQueryAll(domain string) []string {
 		result = append(result, ip)
 	}
 
-	if len(result) <= 2 {
-		expanded := p.expandBySubnet(result)
-		logger.Info("候选 IP 少(%d)，扩展 /24 子网扫描 → %d 个", len(result), len(expanded))
-		result = expanded
-	}
-
-	return result
-}
-
-// expandBySubnet takes a list of IPs and adds neighbors in the same /24 subnet.
-// This helps with CDN domains where nearby IPs serve the same content.
-func (p *Prober) expandBySubnet(ips []string) []string {
-	seen := make(map[string]bool)
-	for _, ip := range ips {
-		seen[ip] = true
-	}
-
-	for _, ip := range ips {
-		parts := strings.Split(ip, ".")
-		if len(parts) != 4 {
-			continue
-		}
-		base := parts[0] + "." + parts[1] + "." + parts[2] + "."
-		// Add a few neighbors in the same /24 (not too many — each adds probe time)
-		for _, lastOctet := range []int{1, 2, 3} {
-			neighbor := fmt.Sprintf("%s%d", base, lastOctet)
-			if !seen[neighbor] && isValidPublicIP(neighbor) {
-				seen[neighbor] = true
-			}
-		}
-	}
-
-	result := make([]string, 0, len(seen))
-	for ip := range seen {
-		result = append(result, ip)
-	}
 	return result
 }
 
@@ -232,26 +195,3 @@ func isValidPublicIP(s string) bool {
 	return true
 }
 
-// isValidIP checks if a string is a valid IPv4 address (any range).
-func isValidIP(s string) bool {
-	parts := strings.Split(s, ".")
-	if len(parts) != 4 {
-		return false
-	}
-	for _, p := range parts {
-		if p == "" || len(p) > 3 {
-			return false
-		}
-		n := 0
-		for _, c := range p {
-			if c < '0' || c > '9' {
-				return false
-			}
-			n = n*10 + int(c-'0')
-		}
-		if n > 255 {
-			return false
-		}
-	}
-	return true
-}

@@ -11,12 +11,11 @@ import (
 )
 
 // Manager is the top-level orchestrator for the acceleration system.
-// It ties together the prober, hosts manager, proxy server, and switcher.
+// It ties together the prober, proxy server, and switcher.
 type Manager struct {
 	mu        sync.Mutex
 	cfg       *config.AppConfig
 	prober    *prober.Prober
-	hostsMgr  *HostsMgr
 	proxy     *ProxyServer
 	switcher  *Switcher
 	cloudPool *cloudpool.Manager
@@ -33,10 +32,9 @@ func NewManager(cfg *config.AppConfig) *Manager {
 	cp.StartFetchLoop()
 	p.SetCloudPool(cp)
 
-	hostsMgr := NewHostsMgr()
 	proxySrv := NewProxyServer(cfg.Advanced.ProxyPort, p)
 	proxySrv.SetRelay(&cfg.Relay)
-	switcher := NewSwitcher(hostsMgr, proxySrv, p)
+	switcher := NewSwitcher(proxySrv, p)
 	switcher.SetIntervals(cfg.Advanced.HealthCheckInterval, cfg.Advanced.ProbeInterval)
 
 	// Set domains from enabled sites
@@ -46,7 +44,6 @@ func NewManager(cfg *config.AppConfig) *Manager {
 	return &Manager{
 		cfg:       cfg,
 		prober:    p,
-		hostsMgr:  hostsMgr,
 		proxy:     proxySrv,
 		switcher:  switcher,
 		cloudPool: cp,
@@ -115,20 +112,7 @@ func (m *Manager) Reprobe() error {
 	domains := domainListFromConfig(m.cfg)
 	results := m.prober.ProbeDomains(domains)
 
-	// Update hosts if in hosts mode
-	if m.switcher.GetMode() == "hosts" {
-		entries := make(map[string]string)
-		for domain, result := range results {
-			if result.BestIP != "" {
-				entries[domain] = result.BestIP
-			}
-		}
-		if len(entries) > 0 {
-			if err := m.hostsMgr.WriteEntries(entries); err != nil {
-				logger.Error("重新探测后更新 hosts 失败: %v", err)
-			}
-		}
-	}
+	_ = results // results are cached in prober for SOCKS5 fallback IP selection
 
 	logger.Info("手动重新探测完成")
 	return nil

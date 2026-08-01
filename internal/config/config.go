@@ -19,12 +19,11 @@ type RelayConfig struct {
 }
 
 type AdvancedConfig struct {
-	ProxyPort             int      `json:"proxyPort"`
-	ProbeInterval         int      `json:"probeInterval"`
-	HealthCheckInterval   int      `json:"healthCheckInterval"`
-	DohProviders          []string `json:"dohProviders"`
-	MaxIPsPerDomain       int      `json:"maxIPsPerDomain"`
-	PreferredMode         string   `json:"preferredMode"`
+	ProxyPort           int      `json:"proxyPort"`
+	ProbeInterval       int      `json:"probeInterval"`
+	HealthCheckInterval int      `json:"healthCheckInterval"`
+	DohProviders        []string `json:"dohProviders"`
+	MaxIPsPerDomain     int      `json:"maxIPsPerDomain"`
 }
 
 type AppConfig struct {
@@ -50,7 +49,6 @@ func DefaultConfig() *AppConfig {
 			HealthCheckInterval: 60,
 			DohProviders:        []string{"alidns", "dohpub", "dnspod", "360"},
 			MaxIPsPerDomain:     5,
-			PreferredMode:       "auto",
 		},
 		Relay: RelayConfig{
 			Enabled:  true,
@@ -110,9 +108,6 @@ func Load() (*AppConfig, error) {
 	}
 	if cfg.Advanced.MaxIPsPerDomain == 0 {
 		cfg.Advanced.MaxIPsPerDomain = defaults.Advanced.MaxIPsPerDomain
-	}
-	if cfg.Advanced.PreferredMode == "" {
-		cfg.Advanced.PreferredMode = defaults.Advanced.PreferredMode
 	}
 
 	return &cfg, nil

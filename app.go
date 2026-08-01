@@ -163,12 +163,6 @@ func (a *App) Reprobe() error {
 	return a.mgr.Reprobe()
 }
 
-// CleanHosts removes DirectLink entries from hosts file.
-func (a *App) CleanHosts() error {
-	hostsMgr := intercept.NewHostsMgr()
-	return hostsMgr.Clean()
-}
-
 // SetAutoStart enables or disables autostart.
 func (a *App) SetAutoStart(enabled bool) error {
 	if enabled {

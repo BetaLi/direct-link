@@ -2,10 +2,9 @@ package config
 
 // DomainRule defines a single domain to accelerate.
 type DomainRule struct {
-	Domain     string   `json:"domain"`
-	QueryName  string   `json:"queryName"`
-	KnownIPs   []string `json:"knownIPs"`
-	NeedPort22 bool     `json:"needPort22"` // if true, probe also requires port 22 (SSH)
+	Domain   string   `json:"domain"`
+	QueryName string   `json:"queryName"`
+	KnownIPs []string `json:"knownIPs"`
 }
 
 // SiteRule defines a group of domains for a site (e.g. Steam, GitHub).
@@ -41,22 +40,18 @@ func BuiltinRules() []SiteRule {
 			Name: "GitHub",
 			Icon: "github",
 			Domains: []DomainRule{
-				// github.com: needs both 443 (HTTPS) and 22 (SSH for git clone)
-				// 20.205.243.168 does NOT support port 22 — excluded.
-				// 140.82.112.4 and 140.82.114.4 support both ports.
+				// github.com: known-good IPs (20.205.243.168 excluded — doesn't support SSH port 22)
 				{
-					Domain:     "github.com",
-					KnownIPs:   []string{"140.82.112.4", "140.82.114.4", "140.82.112.3", "20.205.243.166"},
-					NeedPort22: true,
+					Domain:   "github.com",
+					KnownIPs: []string{"140.82.112.4", "140.82.114.4", "140.82.112.3", "20.205.243.166"},
 				},
 				{
 					Domain:     "api.github.com",
 					KnownIPs:   []string{"20.205.243.168"},
 				},
 				{
-					Domain:     "codeload.github.com",
-					KnownIPs:   []string{"140.82.112.4", "20.205.243.165"},
-					NeedPort22: true,
+					Domain:   "codeload.github.com",
+					KnownIPs: []string{"140.82.112.4", "20.205.243.165"},
 				},
 				{
 					Domain:     "live.github.com",
@@ -117,15 +112,3 @@ func GetKnownIPs(domain string) []string {
 	return nil
 }
 
-// NeedsPort22 returns true if the domain requires port 22 (SSH) access.
-func NeedsPort22(domain string) bool {
-	rules := BuiltinRules()
-	for _, rule := range rules {
-		for _, d := range rule.Domains {
-			if d.Domain == domain {
-				return d.NeedPort22
-			}
-		}
-	}
-	return false
-}

@@ -49,7 +49,7 @@ Commands:
   run       启动加速器 (默认)
   probe     探测最优 IP 并显示结果
   status    查看当前状态
-  clean     清理 hosts 并恢复系统代理
+  clean     清理系统代理设置并恢复直连
   help      显示帮助信息`)
 }
 
@@ -176,13 +176,6 @@ func cmdStatus() {
 }
 
 func cmdClean() {
-	hostsMgr := intercept.NewHostsMgr()
-	if err := hostsMgr.Clean(); err != nil {
-		fmt.Printf("清理 hosts 失败: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("✓ hosts 已清理")
-
-	_ = system.ClearSystemProxy
+	system.ClearSystemProxy()
 	fmt.Println("✓ 系统代理已清除")
 }

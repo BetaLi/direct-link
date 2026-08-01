@@ -1,9 +1,9 @@
 package prober
 
 import (
-	"fmt"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,39 +111,7 @@ func isTimeout(err error) bool {
 		return false
 	}
 	s := err.Error()
-	return len(s) > 0 && (contains(s, "timeout") || contains(s, "i/o timeout") || contains(s, "deadline"))
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || (len(s) > len(sub) && (indexOf(s, sub) >= 0)))
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		match := true
-		for j := 0; j < len(sub); j++ {
-			if s[i+j] != sub[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i
-		}
-	}
-	return -1
-}
-
-// tcpProbe dials a TCP connection and measures RTT (no retry).
-func tcpProbe(ip string, port string, timeout time.Duration) (time.Duration, bool) {
-	start := time.Now()
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, port), timeout)
-	if err != nil {
-		return 0, false
-	}
-	rtt := time.Since(start)
-	conn.Close()
-	return rtt, true
+	return strings.Contains(s, "timeout") || strings.Contains(s, "i/o timeout") || strings.Contains(s, "deadline")
 }
 
 // systemDNSLookup does a standard system DNS lookup as fallback.
@@ -161,7 +129,3 @@ func systemDNSLookup(domain string) []string {
 	return result
 }
 
-// formatDuration formats a duration for display.
-func formatDuration(d time.Duration) string {
-	return fmt.Sprintf("%dms", d.Milliseconds())
-}

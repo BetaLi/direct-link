@@ -6,7 +6,6 @@ export namespace config {
 	    healthCheckInterval: number;
 	    dohProviders: string[];
 	    maxIPsPerDomain: number;
-	    preferredMode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AdvancedConfig(source);
@@ -19,7 +18,6 @@ export namespace config {
 	        this.healthCheckInterval = source["healthCheckInterval"];
 	        this.dohProviders = source["dohProviders"];
 	        this.maxIPsPerDomain = source["maxIPsPerDomain"];
-	        this.preferredMode = source["preferredMode"];
 	    }
 	}
 	export class RelayConfig {

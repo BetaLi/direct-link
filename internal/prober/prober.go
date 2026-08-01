@@ -2,24 +2,21 @@ package prober
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
 
 	"directlink/internal/cloudpool"
-	"directlink/internal/config"
 	"directlink/internal/logger"
 )
 
 // IPResult holds a probed IP with its metrics.
 type IPResult struct {
-	IP       string        `json:"ip"`
-	RTT      time.Duration `json:"rtt"`
-	TLSOK    bool          `json:"tlsOk"`
-	HTTPOK   bool          `json:"httpOk"`
-	Port22OK bool          `json:"port22Ok"`
+	IP     string        `json:"ip"`
+	RTT    time.Duration `json:"rtt"`
+	TLSOK  bool          `json:"tlsOk"`
+	HTTPOK bool          `json:"httpOk"`
 }
 
 // DomainResult holds the best IPs for a domain.
@@ -34,13 +31,12 @@ type DomainResult struct {
 
 // Prober is the main probing engine.
 type Prober struct {
-	mu          sync.RWMutex
-	results     map[string]*DomainResult // domain -> result
-	dohClient   *http.Client
-	httpClient  *http.Client
-	maxIPs      int
+	mu           sync.RWMutex
+	results      map[string]*DomainResult // domain -> result
+	dohClient    *http.Client
+	maxIPs       int
 	dohProviders []string
-	cloudPool   *cloudpool.Manager
+	cloudPool    *cloudpool.Manager
 }
 
 func New(maxIPs int, dohProviders []string) *Prober {
@@ -51,10 +47,9 @@ func New(maxIPs int, dohProviders []string) *Prober {
 		dohProviders = []string{"alidns", "dohpub", "dnspod", "360"}
 	}
 	return &Prober{
-		results:     make(map[string]*DomainResult),
-		dohClient:   &http.Client{Timeout: 10 * time.Second},
-		httpClient:  &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }},
-		maxIPs:      maxIPs,
+		results:      make(map[string]*DomainResult),
+		dohClient:    &http.Client{Timeout: 10 * time.Second},
+		maxIPs:       maxIPs,
 		dohProviders: dohProviders,
 	}
 }
@@ -102,46 +97,15 @@ func (p *Prober) ProbeDomain(domain string) (*DomainResult, error) {
 	}
 	logger.Info("TLS 验证 %s: %d/%d 通过", domain, tlsOK, len(tcpResults))
 
-	// Step 3b: If domain needs port 22 (SSH), also test port 22
-	needPort22 := config.NeedsPort22(domain)
-	if needPort22 {
-		for i := range tcpResults {
-			if tcpResults[i].TLSOK {
-				tcpResults[i].Port22OK = p.checkPort22(tcpResults[i].IP)
-			}
-		}
-		port22OK := 0
-		for _, r := range tcpResults {
-			if r.Port22OK {
-				port22OK++
-			}
-		}
-		logger.Info("端口 22 验证 %s: %d/%d 通过", domain, port22OK, len(tcpResults))
-	}
-
-	// Step 4: HTTP availability check on TLS-OK IPs
-	for i := range tcpResults {
-		if tcpResults[i].TLSOK {
-			tcpResults[i].HTTPOK = p.checkHTTP(domain, tcpResults[i].IP)
-		}
-	}
-
-	// Sort: TLS OK + HTTP OK first, then by RTT
+	// Sort: TLS OK first, then by RTT
 	sort.Slice(tcpResults, func(i, j int) bool {
-		// Prioritize: TLSOK && HTTPOK > TLSOK > others
 		scoreI := 0
 		if tcpResults[i].TLSOK {
-			scoreI += 10
-		}
-		if tcpResults[i].HTTPOK {
-			scoreI += 5
+			scoreI = 10
 		}
 		scoreJ := 0
 		if tcpResults[j].TLSOK {
-			scoreJ += 10
-		}
-		if tcpResults[j].HTTPOK {
-			scoreJ += 5
+			scoreJ = 10
 		}
 		if scoreI != scoreJ {
 			return scoreI > scoreJ
@@ -149,13 +113,10 @@ func (p *Prober) ProbeDomain(domain string) (*DomainResult, error) {
 		return tcpResults[i].RTT < tcpResults[j].RTT
 	})
 
-	// Filter out IPs that failed TLS (and port 22 if needed)
+	// Filter out IPs that failed TLS
 	var validIPs []IPResult
 	for _, r := range tcpResults {
 		if !r.TLSOK {
-			continue
-		}
-		if needPort22 && !r.Port22OK {
 			continue
 		}
 		validIPs = append(validIPs, r)
@@ -254,12 +215,3 @@ func (p *Prober) GetBestIP(domain string) string {
 	return ""
 }
 
-// checkPort22 tests if port 22 (SSH) is open on the given IP.
-func (p *Prober) checkPort22(ip string) bool {
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, "22"), 4*time.Second)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}

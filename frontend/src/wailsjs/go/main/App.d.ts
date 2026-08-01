@@ -5,8 +5,6 @@ import {logger} from '../models';
 import {intercept} from '../models';
 import {context} from '../models';
 
-export function CleanHosts():Promise<void>;
-
 export function DomReady():Promise<void>;
 
 export function GetAutoStart():Promise<boolean>;
