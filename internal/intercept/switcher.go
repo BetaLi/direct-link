@@ -74,8 +74,22 @@ func (s *Switcher) Start() error {
 		return fmt.Errorf("所有域名探测失败，请检查网络连接")
 	}
 
-	// Try hosts mode first
+	// Try hosts mode first (falls back to proxy internally)
 	s.enableHostsMode(results)
+
+	// Verify that a mode was actually engaged
+	s.mu.Lock()
+	mode := s.mode
+	s.mu.Unlock()
+
+	if mode == "off" {
+		return fmt.Errorf("加速启动失败：hosts 和代理模式均无法启用，请以管理员身份运行")
+	}
+
+	// Hint to user about browser DNS cache
+	if mode == "hosts" {
+		logger.Info("提示：如页面仍打不开，请重启浏览器或使用无痕模式（浏览器有独立 DNS 缓存）")
+	}
 
 	// Start health check loop
 	s.stopCh = make(chan struct{})
@@ -115,7 +129,8 @@ func (s *Switcher) enableHostsMode(results map[string]*prober.DomainResult) {
 	}
 
 	if len(entries) == 0 {
-		logger.Warn("无可用 IP 写入 hosts")
+		logger.Warn("无可用 IP 写入 hosts，切换到代理模式")
+		s.enableProxyMode()
 		return
 	}
 
@@ -132,19 +147,22 @@ func (s *Switcher) enableHostsMode(results map[string]*prober.DomainResult) {
 }
 
 // enableProxyMode starts the proxy server and sets system proxy.
-func (s *Switcher) enableProxyMode() {
+// Returns error if the proxy or system proxy setup fails.
+func (s *Switcher) enableProxyMode() error {
 	// Clean hosts first
 	s.hostsMgr.Clean()
 
 	// Start proxy server
 	if err := s.proxy.Start(); err != nil {
 		logger.Error("启动代理服务器失败: %v", err)
-		return
+		return err
 	}
 
 	// Set system proxy
 	if err := system.SetSystemProxy(s.proxy.GetAddr()); err != nil {
 		logger.Error("设置系统代理失败: %v", err)
+		s.proxy.Stop()
+		return err
 	}
 
 	s.mu.Lock()
@@ -152,12 +170,15 @@ func (s *Switcher) enableProxyMode() {
 	s.mu.Unlock()
 
 	logger.Info("已切换到代理模式: %s", s.proxy.GetAddr())
+	return nil
 }
 
 // switchToProxy switches from hosts to proxy mode.
 func (s *Switcher) switchToProxy() {
 	logger.Info("hosts 健康检测失败，切换到代理模式...")
-	s.enableProxyMode()
+	if err := s.enableProxyMode(); err != nil {
+		logger.Error("切换到代理模式失败: %v", err)
+	}
 }
 
 // switchToHosts switches from proxy to hosts mode.
@@ -222,13 +243,18 @@ func (s *Switcher) doHealthCheck() {
 	if mode == "hosts" {
 		// Check if hosts entries are still working
 		failed := 0
+		updatedEntries := make(map[string]string)
 		for _, domain := range domains {
 			result, ok := s.prober.GetResult(domain)
 			if !ok || result.BestIP == "" {
 				continue
 			}
-			if !checkDomainHealth(s, domain, result.BestIP) {
+			// Try main IP + backup IPs (returns working IP or empty)
+			workingIP := s.prober.CheckHealthWithBackups(domain)
+			if workingIP == "" {
 				failed++
+			} else {
+				updatedEntries[domain] = workingIP
 			}
 		}
 
@@ -236,6 +262,15 @@ func (s *Switcher) doHealthCheck() {
 			logger.Warn("hosts 健康检测: %d/%d 域名不可达", failed, len(domains))
 			if failed > len(domains)/2 {
 				s.switchToProxy()
+			} else {
+				// Some domains failed but majority OK — update hosts with working IPs
+				if len(updatedEntries) > 0 {
+					if err := s.hostsMgr.WriteEntries(updatedEntries); err != nil {
+						logger.Error("健康检测后更新 hosts 失败: %v", err)
+					} else {
+						logger.Info("hosts 已更新（部分域名切换到备用 IP）")
+					}
+				}
 			}
 		} else {
 			logger.Debug("hosts 健康检测: 全部正常")
@@ -280,7 +315,3 @@ func (s *Switcher) doReprobe() {
 	}
 }
 
-// checkDomainHealth checks if a domain is still reachable at the given IP.
-func checkDomainHealth(s *Switcher, domain string, ip string) bool {
-	return s.prober.CheckHealth(domain, ip)
-}

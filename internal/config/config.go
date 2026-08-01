@@ -39,7 +39,7 @@ func DefaultConfig() *AppConfig {
 			ProxyPort:           8848,
 			ProbeInterval:       1800,
 			HealthCheckInterval: 60,
-			DohProviders:        []string{"cloudflare", "google", "alidns"},
+			DohProviders:        []string{"alidns", "dnspod"},
 			MaxIPsPerDomain:     5,
 			PreferredMode:       "auto",
 		},

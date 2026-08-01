@@ -58,23 +58,37 @@ func New(maxIPs int, dohProviders []string) *Prober {
 func (p *Prober) ProbeDomain(domain string) (*DomainResult, error) {
 	logger.Info("开始探测域名: %s", domain)
 
-	// Step 1: DoH query — collect candidate IPs from all providers
+	// Step 1: DoH query — collect candidate IPs from all providers (multi-round)
 	candidates := p.dohQueryAll(domain)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("DoH 查询无结果: %s", domain)
 	}
-	logger.Info("DoH 查询 %s 得到 %d 个候选IP", domain, len(candidates))
+	logger.Info("DoH 查询 %s 得到 %d 个候选IP: %v", domain, len(candidates), candidates)
 
-	// Step 2: TCP speed test — measure RTT, filter failures
+	// Step 2: TCP speed test — measure RTT, filter failures (with retry)
 	tcpResults := p.tcpSpeedTest(candidates, domain)
 	if len(tcpResults) == 0 {
-		return nil, fmt.Errorf("所有候选 IP TCP 连接失败: %s", domain)
+		// Log the IPs that were tried
+		var ipList []string
+		for _, c := range candidates {
+			ipList = append(ipList, c)
+		}
+		return nil, fmt.Errorf("所有候选 IP TCP 连接失败: %s (试过: %v)", domain, ipList)
 	}
 
 	// Step 3: TLS verification — verify certificate matches domain
 	for i := range tcpResults {
 		tcpResults[i].TLSOK = p.checkTLS(domain, tcpResults[i].IP)
 	}
+
+	// Log TLS results
+	tlsOK := 0
+	for _, r := range tcpResults {
+		if r.TLSOK {
+			tlsOK++
+		}
+	}
+	logger.Info("TLS 验证 %s: %d/%d 通过", domain, tlsOK, len(tcpResults))
 
 	// Step 4: HTTP availability check on TLS-OK IPs
 	for i := range tcpResults {
@@ -176,11 +190,6 @@ func (p *Prober) ProbeDomains(domains []string) map[string]*DomainResult {
 
 	wg.Wait()
 	return results
-}
-
-// CheckHealth checks if a domain is still reachable at the given IP via TCP+TLS.
-func (p *Prober) CheckHealth(domain string, ip string) bool {
-	return p.checkTLS(domain, ip)
 }
 
 // GetResult returns the cached result for a domain.

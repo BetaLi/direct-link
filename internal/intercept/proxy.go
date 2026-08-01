@@ -54,7 +54,9 @@ func (p *ProxyServer) Start() error {
 		p.port = ln.Addr().(*net.TCPAddr).Port
 		logger.Info("代理端口 %d 被占用，改用 %d", p.port, p.port)
 	}
-	p.listener = ln
+	p.mu.Lock()
+	p.closed = false
+	p.mu.Unlock()
 
 	logger.Info("代理服务器已启动: 127.0.0.1:%d", p.port)
 
@@ -62,7 +64,10 @@ func (p *ProxyServer) Start() error {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
-				if p.closed {
+				p.mu.RLock()
+				closed := p.closed
+				p.mu.RUnlock()
+				if closed {
 					return
 				}
 				logger.Error("代理接受连接失败: %v", err)

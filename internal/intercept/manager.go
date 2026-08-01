@@ -151,7 +151,7 @@ func (m *Manager) GetStatus() Status {
 		var latency int64
 		domainCount := 0
 		for _, d := range rule.Domains {
-			if r, ok := results[d.Domain]; ok {
+			if r, ok := results[d.Domain]; ok && r.BestIP != "" {
 				domainCount++
 				if bestIP == "" {
 					bestIP = r.BestIP

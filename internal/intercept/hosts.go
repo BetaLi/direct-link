@@ -62,15 +62,18 @@ func (h *HostsMgr) WriteEntries(entries map[string]string) error {
 	buf.WriteString(endMark)
 	buf.WriteString("\r\n")
 
-	// Atomic write: write to temp file, then replace
+	// Atomic write: write to temp file, then rename over original
+	// os.Rename on Windows uses MoveFileEx with MOVEFILE_REPLACE_EXISTING,
+	// which atomically replaces the destination. If it fails, the original
+	// hosts file is preserved — no race window.
 	tmpFile := hostsFile + ".directlink.tmp"
 	if err := os.WriteFile(tmpFile, buf.Bytes(), 0644); err != nil {
 		return fmt.Errorf("写入临时文件失败: %w", err)
 	}
 
-	// On Windows, need to remove original before rename
-	os.Remove(hostsFile)
 	if err := os.Rename(tmpFile, hostsFile); err != nil {
+		// Clean up temp file on failure
+		os.Remove(tmpFile)
 		return fmt.Errorf("替换 hosts 文件失败: %w", err)
 	}
 
@@ -106,8 +109,8 @@ func (h *HostsMgr) Clean() error {
 		return fmt.Errorf("写入临时文件失败: %w", err)
 	}
 
-	os.Remove(hostsFile)
 	if err := os.Rename(tmpFile, hostsFile); err != nil {
+		os.Remove(tmpFile)
 		return fmt.Errorf("替换 hosts 文件失败: %w", err)
 	}
 
@@ -149,13 +152,21 @@ func (h *HostsMgr) removeBlock(content string) string {
 
 // flushDNS flushes the system DNS cache.
 func (h *HostsMgr) flushDNS() {
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("ipconfig", "/flushdns")
+		if err := cmd.Run(); err != nil {
+			logger.Warn("刷新 DNS 缓存失败: %v", err)
+		} else {
+			logger.Debug("DNS 缓存已刷新")
+		}
 		return
 	}
-	cmd := exec.Command("ipconfig", "/flushdns")
-	if err := cmd.Run(); err != nil {
-		logger.Warn("刷新 DNS 缓存失败: %v", err)
-	} else {
-		logger.Debug("DNS 缓存已刷新")
+
+	if runtime.GOOS == "darwin" {
+		// macOS: use dscacheutil + mDNSResponder
+		exec.Command("dscacheutil", "-flushcache").Run()
+		exec.Command("killall", "-HUP", "mDNSResponder").Run()
+		logger.Debug("DNS 缓存已刷新 (macOS)")
+		return
 	}
 }

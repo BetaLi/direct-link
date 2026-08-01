@@ -2,8 +2,9 @@ package config
 
 // DomainRule defines a single domain to accelerate.
 type DomainRule struct {
-	Domain    string `json:"domain"`    // e.g. "store.steampowered.com"
-	QueryName string `json:"queryName"` // DoH query name, empty = same as Domain
+	Domain    string   `json:"domain"`    // e.g. "store.steampowered.com"
+	QueryName string   `json:"queryName"` // DoH query name, empty = same as Domain
+	KnownIPs  []string `json:"knownIPs"`  // Known-good IPs to try in addition to DoH results
 }
 
 // SiteRule defines a group of domains for a site (e.g. Steam, GitHub).
@@ -39,16 +40,33 @@ func BuiltinRules() []SiteRule {
 			Name: "GitHub",
 			Icon: "github",
 			Domains: []DomainRule{
-				{Domain: "github.com"},
-				{Domain: "api.github.com"},
+				// github.com: AliDNS often returns blocked 20.205.243.166,
+				// but 20.205.243.168 and 140.82.x.x work fine.
+				{
+					Domain:   "github.com",
+					KnownIPs: []string{"20.205.243.168", "140.82.112.4", "140.82.114.4", "140.82.112.3"},
+				},
+				{
+					Domain:   "api.github.com",
+					KnownIPs: []string{"20.205.243.168"},
+				},
+				{
+					Domain:   "codeload.github.com",
+					KnownIPs: []string{"20.205.243.165", "140.82.112.4"},
+				},
+				{
+					Domain:   "live.github.com",
+					KnownIPs: []string{"140.82.114.26", "140.82.112.4"},
+				},
+				{
+					Domain:   "collector.github.com",
+					KnownIPs: []string{"140.82.113.22", "140.82.112.4"},
+				},
 				{Domain: "raw.githubusercontent.com"},
 				{Domain: "assets-cdn.github.com"},
 				{Domain: "github.global.ssl.fastly.net"},
-				{Domain: "codeload.github.com"},
 				{Domain: "objects.githubusercontent.com"},
 				{Domain: "github.githubassets.com"},
-				{Domain: "collector.github.com"},
-				{Domain: "live.github.com"},
 				{Domain: "github.io"},
 			},
 		},
@@ -77,6 +95,19 @@ func GetAllDomains(siteID string) []string {
 				domains[i] = d.Domain
 			}
 			return domains
+		}
+	}
+	return nil
+}
+
+// GetKnownIPs returns known-good IPs for a domain, if any.
+func GetKnownIPs(domain string) []string {
+	rules := BuiltinRules()
+	for _, rule := range rules {
+		for _, d := range rule.Domains {
+			if d.Domain == domain && len(d.KnownIPs) > 0 {
+				return d.KnownIPs
+			}
 		}
 	}
 	return nil
