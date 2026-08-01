@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"directlink/internal/cloudpool"
 	"directlink/internal/config"
 	"directlink/internal/logger"
 	"directlink/internal/prober"
@@ -12,20 +13,29 @@ import (
 // Manager is the top-level orchestrator for the acceleration system.
 // It ties together the prober, hosts manager, proxy server, and switcher.
 type Manager struct {
-	mu       sync.Mutex
-	cfg      *config.AppConfig
-	prober   *prober.Prober
-	hostsMgr *HostsMgr
-	proxy    *ProxyServer
-	switcher *Switcher
-	running  bool
+	mu        sync.Mutex
+	cfg       *config.AppConfig
+	prober    *prober.Prober
+	hostsMgr  *HostsMgr
+	proxy     *ProxyServer
+	switcher  *Switcher
+	cloudPool *cloudpool.Manager
+	running   bool
 }
 
 // NewManager creates a new Manager from the given config.
 func NewManager(cfg *config.AppConfig) *Manager {
 	p := prober.New(cfg.Advanced.MaxIPsPerDomain, cfg.Advanced.DohProviders)
+
+	// Initialize cloud IP pool (fetches from GitHub, caches locally)
+	cp := cloudpool.New("")
+	cp.LoadLocal()
+	cp.StartFetchLoop()
+	p.SetCloudPool(cp)
+
 	hostsMgr := NewHostsMgr()
 	proxySrv := NewProxyServer(cfg.Advanced.ProxyPort, p)
+	proxySrv.SetRelay(&cfg.Relay)
 	switcher := NewSwitcher(hostsMgr, proxySrv, p)
 	switcher.SetIntervals(cfg.Advanced.HealthCheckInterval, cfg.Advanced.ProbeInterval)
 
@@ -34,11 +44,12 @@ func NewManager(cfg *config.AppConfig) *Manager {
 	switcher.SetDomains(domains)
 
 	return &Manager{
-		cfg:      cfg,
-		prober:   p,
-		hostsMgr: hostsMgr,
-		proxy:    proxySrv,
-		switcher: switcher,
+		cfg:       cfg,
+		prober:    p,
+		hostsMgr:  hostsMgr,
+		proxy:     proxySrv,
+		switcher:  switcher,
+		cloudPool: cp,
 	}
 }
 

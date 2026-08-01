@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"directlink/internal/config"
 	"directlink/internal/logger"
 )
 
@@ -75,13 +76,21 @@ func (p *Prober) tryTLS(domain string, ip string, timeout time.Duration) (bool, 
 }
 
 // CheckHealth checks if a domain is still reachable at the given IP via TLS.
-// Tries the main IP first, then backup IPs.
+// For domains that need port 22, also verifies SSH port.
 func (p *Prober) CheckHealth(domain string, ip string) bool {
-	return p.checkTLSWithRetry(domain, ip, 2)
+	if !p.checkTLSWithRetry(domain, ip, 2) {
+		return false
+	}
+	if config.NeedsPort22(domain) {
+		if !p.checkPort22(ip) {
+			return false
+		}
+	}
+	return true
 }
 
-// CheckHealthWithBackups checks the best IP, and if it fails, tries backup IPs.
-// Returns the working IP (or empty string if all fail).
+// CheckHealthWithBackups checks the best IP (and port 22 if needed),
+// and if it fails, tries backup IPs. Returns the working IP or empty string.
 func (p *Prober) CheckHealthWithBackups(domain string) string {
 	p.mu.RLock()
 	result, ok := p.results[domain]
@@ -91,14 +100,14 @@ func (p *Prober) CheckHealthWithBackups(domain string) string {
 	}
 
 	// Try best IP first
-	if p.checkTLSWithRetry(domain, result.BestIP, 2) {
+	if p.CheckHealth(domain, result.BestIP) {
 		return result.BestIP
 	}
 
 	// Try backup IPs
 	for _, backupIP := range result.BackupIPs {
 		logger.Debug("主 IP 失败，尝试备用 IP %s @ %s", backupIP, domain)
-		if p.checkTLSWithRetry(domain, backupIP, 2) {
+		if p.CheckHealth(domain, backupIP) {
 			// Promote backup to best
 			p.mu.Lock()
 			if r, ok := p.results[domain]; ok {

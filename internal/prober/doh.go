@@ -28,12 +28,14 @@ type DoHAnswer struct {
 }
 
 // DoH providers — Chinese providers first (reachable in China), international as fallback.
-// We use IP-direct URLs to avoid DNS resolution of the DoH server itself.
+// doh.pub is DNSPod's public DoH (same as Watt Toolkit uses), returns Google-compatible JSON.
 var dohEndpoints = map[string]string{
-	"alidns":     "https://223.5.5.5/dns-query",
-	"dnspod":     "https://1.12.12.12/dns-query",
+	"alidns":  "https://223.5.5.5/dns-query",
+	"dohpub":  "https://doh.pub/resolve",
+	"dnspod":  "https://1.12.12.12/dns-query",
+	"360":     "https://doh.360.cn/dns-query",
 	"cloudflare": "https://1.1.1.1/dns-query",
-	"google":     "https://8.8.8.8/resolve",
+	"google":  "https://8.8.8.8/resolve",
 }
 
 // dohQuery queries a single DoH provider for A records of the given domain.
@@ -95,6 +97,18 @@ func (p *Prober) dohQueryAll(domain string) []string {
 	for _, ip := range config.GetKnownIPs(domain) {
 		if isValidPublicIP(ip) {
 			seen[ip] = true
+		}
+	}
+
+	// Add cloud IP pool IPs (community-verified, fetched from GitHub)
+	p.mu.RLock()
+	cloudPool := p.cloudPool
+	p.mu.RUnlock()
+	if cloudPool != nil && cloudPool.HasPool() {
+		for _, ip := range cloudPool.GetIPs(domain) {
+			if isValidPublicIP(ip) && !seen[ip] {
+				seen[ip] = true
+			}
 		}
 	}
 

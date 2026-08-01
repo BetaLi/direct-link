@@ -22,6 +22,26 @@ export namespace config {
 	        this.preferredMode = source["preferredMode"];
 	    }
 	}
+	export class RelayConfig {
+	    enabled: boolean;
+	    host: string;
+	    port: number;
+	    username: string;
+	    password: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RelayConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	    }
+	}
 	export class SiteConfig {
 	    enabled: boolean;
 	
@@ -38,6 +58,7 @@ export namespace config {
 	    version: string;
 	    sites: Record<string, SiteConfig>;
 	    advanced: AdvancedConfig;
+	    relay: RelayConfig;
 	    customSites: string[];
 	    autostart: boolean;
 	    minimizeToTray: boolean;
@@ -51,6 +72,7 @@ export namespace config {
 	        this.version = source["version"];
 	        this.sites = this.convertValues(source["sites"], SiteConfig, true);
 	        this.advanced = this.convertValues(source["advanced"], AdvancedConfig);
+	        this.relay = this.convertValues(source["relay"], RelayConfig);
 	        this.customSites = source["customSites"];
 	        this.autostart = source["autostart"];
 	        this.minimizeToTray = source["minimizeToTray"];
@@ -74,6 +96,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 
 }
 

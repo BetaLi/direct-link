@@ -10,19 +10,28 @@ type SiteConfig struct {
 	Enabled bool `json:"enabled"`
 }
 
+type RelayConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type AdvancedConfig struct {
 	ProxyPort             int      `json:"proxyPort"`
-	ProbeInterval         int      `json:"probeInterval"`         // seconds
-	HealthCheckInterval   int      `json:"healthCheckInterval"`  // seconds
+	ProbeInterval         int      `json:"probeInterval"`
+	HealthCheckInterval   int      `json:"healthCheckInterval"`
 	DohProviders          []string `json:"dohProviders"`
 	MaxIPsPerDomain       int      `json:"maxIPsPerDomain"`
-	PreferredMode         string   `json:"preferredMode"` // "auto", "hosts", "proxy"
+	PreferredMode         string   `json:"preferredMode"`
 }
 
 type AppConfig struct {
-	Version         string                  `json:"version"`
-	Sites           map[string]SiteConfig   `json:"sites"`
-	Advanced        AdvancedConfig          `json:"advanced"`
+	Version         string                 `json:"version"`
+	Sites           map[string]SiteConfig  `json:"sites"`
+	Advanced        AdvancedConfig         `json:"advanced"`
+	Relay           RelayConfig            `json:"relay"`
 	CustomSites     []string                `json:"customSites"`
 	Autostart       bool                    `json:"autostart"`
 	MinimizeToTray  bool                    `json:"minimizeToTray"`
@@ -39,9 +48,16 @@ func DefaultConfig() *AppConfig {
 			ProxyPort:           8848,
 			ProbeInterval:       1800,
 			HealthCheckInterval: 60,
-			DohProviders:        []string{"alidns", "dnspod"},
+			DohProviders:        []string{"alidns", "dohpub", "dnspod", "360"},
 			MaxIPsPerDomain:     5,
 			PreferredMode:       "auto",
+		},
+		Relay: RelayConfig{
+			Enabled:  true,
+			Host:     "114.55.12.23",
+			Port:     10800,
+			Username: "directlink",
+			Password: "d1r3ctL1nk2026",
 		},
 		Autostart:      true,
 		MinimizeToTray: true,

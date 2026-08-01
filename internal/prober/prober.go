@@ -2,11 +2,14 @@ package prober
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
 
+	"directlink/internal/cloudpool"
+	"directlink/internal/config"
 	"directlink/internal/logger"
 )
 
@@ -16,6 +19,7 @@ type IPResult struct {
 	RTT      time.Duration `json:"rtt"`
 	TLSOK    bool          `json:"tlsOk"`
 	HTTPOK   bool          `json:"httpOk"`
+	Port22OK bool          `json:"port22Ok"`
 }
 
 // DomainResult holds the best IPs for a domain.
@@ -36,6 +40,7 @@ type Prober struct {
 	httpClient  *http.Client
 	maxIPs      int
 	dohProviders []string
+	cloudPool   *cloudpool.Manager
 }
 
 func New(maxIPs int, dohProviders []string) *Prober {
@@ -43,7 +48,7 @@ func New(maxIPs int, dohProviders []string) *Prober {
 		maxIPs = 5
 	}
 	if len(dohProviders) == 0 {
-		dohProviders = []string{"cloudflare", "google", "alidns"}
+		dohProviders = []string{"alidns", "dohpub", "dnspod", "360"}
 	}
 	return &Prober{
 		results:     make(map[string]*DomainResult),
@@ -52,6 +57,13 @@ func New(maxIPs int, dohProviders []string) *Prober {
 		maxIPs:      maxIPs,
 		dohProviders: dohProviders,
 	}
+}
+
+// SetCloudPool sets the cloud IP pool manager for merging cloud IPs.
+func (p *Prober) SetCloudPool(cp *cloudpool.Manager) {
+	p.mu.Lock()
+	p.cloudPool = cp
+	p.mu.Unlock()
 }
 
 // ProbeDomain probes a single domain and returns the result.
@@ -90,6 +102,23 @@ func (p *Prober) ProbeDomain(domain string) (*DomainResult, error) {
 	}
 	logger.Info("TLS 验证 %s: %d/%d 通过", domain, tlsOK, len(tcpResults))
 
+	// Step 3b: If domain needs port 22 (SSH), also test port 22
+	needPort22 := config.NeedsPort22(domain)
+	if needPort22 {
+		for i := range tcpResults {
+			if tcpResults[i].TLSOK {
+				tcpResults[i].Port22OK = p.checkPort22(tcpResults[i].IP)
+			}
+		}
+		port22OK := 0
+		for _, r := range tcpResults {
+			if r.Port22OK {
+				port22OK++
+			}
+		}
+		logger.Info("端口 22 验证 %s: %d/%d 通过", domain, port22OK, len(tcpResults))
+	}
+
 	// Step 4: HTTP availability check on TLS-OK IPs
 	for i := range tcpResults {
 		if tcpResults[i].TLSOK {
@@ -120,12 +149,16 @@ func (p *Prober) ProbeDomain(domain string) (*DomainResult, error) {
 		return tcpResults[i].RTT < tcpResults[j].RTT
 	})
 
-	// Filter out IPs that failed TLS
+	// Filter out IPs that failed TLS (and port 22 if needed)
 	var validIPs []IPResult
 	for _, r := range tcpResults {
-		if r.TLSOK {
-			validIPs = append(validIPs, r)
+		if !r.TLSOK {
+			continue
 		}
+		if needPort22 && !r.Port22OK {
+			continue
+		}
+		validIPs = append(validIPs, r)
 	}
 	if len(validIPs) == 0 {
 		// No TLS-valid IPs — return with empty BestIP so callers know it failed
@@ -219,4 +252,14 @@ func (p *Prober) GetBestIP(domain string) string {
 		return r.BestIP
 	}
 	return ""
+}
+
+// checkPort22 tests if port 22 (SSH) is open on the given IP.
+func (p *Prober) checkPort22(ip string) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, "22"), 4*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }

@@ -9,18 +9,22 @@ import (
 	"sync"
 	"time"
 
+	"directlink/internal/config"
 	"directlink/internal/logger"
 	"directlink/internal/prober"
+	"golang.org/x/net/proxy"
 )
 
 // ProxyServer is a local HTTP CONNECT tunnel proxy that routes target domains to optimal IPs.
 type ProxyServer struct {
-	mu       sync.RWMutex
-	listener net.Listener
-	port     int
-	prober   *prober.Prober
-	enabledDomains map[string]bool // domain -> accelerated?
-	closed   bool
+	mu             sync.RWMutex
+	listener       net.Listener
+	port           int
+	prober         *prober.Prober
+	enabledDomains map[string]bool
+	relayConfig    *config.RelayConfig
+	socksDialer    proxy.Dialer
+	closed         bool
 }
 
 func NewProxyServer(port int, prober *prober.Prober) *ProxyServer {
@@ -28,6 +32,29 @@ func NewProxyServer(port int, prober *prober.Prober) *ProxyServer {
 		port:           port,
 		prober:         prober,
 		enabledDomains: make(map[string]bool),
+	}
+}
+
+// SetRelay configures the SOCKS5 relay for blocked domains.
+func (p *ProxyServer) SetRelay(cfg *config.RelayConfig) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.relayConfig = cfg
+	if cfg != nil && cfg.Enabled && cfg.Host != "" {
+		addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+		var auth *proxy.Auth
+		if cfg.Username != "" {
+			auth = &proxy.Auth{User: cfg.Username, Password: cfg.Password}
+		}
+		dialer, err := proxy.SOCKS5("tcp", addr, auth, &net.Dialer{Timeout: 10 * time.Second})
+		if err != nil {
+			logger.Error("SOCKS5 中转初始化失败: %v", err)
+			return
+		}
+		p.socksDialer = dialer
+		logger.Info("SOCKS5 中转已配置: %s", addr)
+	} else {
+		p.socksDialer = nil
 	}
 }
 
@@ -129,7 +156,6 @@ func (p *ProxyServer) handleConnection(conn net.Conn) {
 
 // handleConnect handles an HTTP CONNECT method (HTTPS tunneling).
 func (p *ProxyServer) handleConnect(conn net.Conn, reader *bufio.Reader, requestLine string) {
-	// Parse: CONNECT host:port HTTP/1.1
 	parts := strings.Fields(requestLine)
 	if len(parts) < 2 {
 		conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
@@ -139,26 +165,83 @@ func (p *ProxyServer) handleConnect(conn net.Conn, reader *bufio.Reader, request
 	hostPort := parts[1]
 	domain, port := splitHostPort(hostPort)
 
-	// Determine target: use optimal IP if this is an accelerated domain
-	targetAddr := hostPort
 	p.mu.RLock()
 	isAccelerated := p.enabledDomains[domain]
+	socksDialer := p.socksDialer
 	p.mu.RUnlock()
 
-	if isAccelerated && p.prober != nil {
-		bestIP := p.prober.GetBestIP(domain)
-		if bestIP != "" {
-			targetAddr = fmt.Sprintf("%s:%s", bestIP, port)
-			logger.Debug("代理加速: %s → %s", domain, targetAddr)
-		}
-	}
+	var upstream net.Conn
+	var err error
 
-	// Connect to target
-	upstream, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
-	if err != nil {
-		logger.Debug("代理连接目标失败 %s: %v", targetAddr, err)
-		conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
-		return
+	if !isAccelerated {
+		// Non-accelerated domain: direct dial only, no relay
+		upstream, err = net.DialTimeout("tcp", hostPort, 10*time.Second)
+		if err != nil {
+			conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+			return
+		}
+	} else if socksDialer != nil {
+		// Accelerated domain with relay: try SOCKS5 with known-good IP first
+		// Use known IPs from config rules to bypass VPS DNS pollution
+		// (VPS DNS may resolve github.com to blocked Azure IPs too)
+		knownIPs := config.GetKnownIPs(domain)
+		var upstreamConnected bool
+
+		for _, knownIP := range knownIPs {
+			relayTarget := fmt.Sprintf("%s:%s", knownIP, port)
+			logger.Debug("SOCKS5 中转 (已知IP): %s → %s", domain, relayTarget)
+			upstream, err = socksDialer.Dial("tcp", relayTarget)
+			if err == nil {
+				logger.Debug("SOCKS5 中转成功: %s @ %s", domain, knownIP)
+				upstreamConnected = true
+				break
+			}
+			logger.Debug("SOCKS5 中转失败 %s @ %s: %v", domain, knownIP, err)
+		}
+
+		if !upstreamConnected {
+			// All known IPs failed — try domain name as last resort
+			logger.Debug("已知IP全部失败，尝试域名中转 %s...", hostPort)
+			upstream, err = socksDialer.Dial("tcp", hostPort)
+			if err == nil {
+				upstreamConnected = true
+				logger.Debug("域名中转成功: %s", domain)
+			}
+		}
+
+		if !upstreamConnected {
+			// SOCKS5 fully failed — try direct with prober's best IP
+			logger.Debug("SOCKS5 全部失败，尝试直连 %s...", domain)
+			bestIP := ""
+			if p.prober != nil {
+				bestIP = p.prober.GetBestIP(domain)
+			}
+			if bestIP != "" {
+				upstream, err = net.DialTimeout("tcp", fmt.Sprintf("%s:%s", bestIP, port), 10*time.Second)
+			} else {
+				upstream, err = net.DialTimeout("tcp", hostPort, 10*time.Second)
+			}
+			if err != nil {
+				logger.Debug("直连也失败 %s: %v", domain, err)
+				conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+				return
+			}
+			logger.Debug("直连成功: %s", domain)
+		}
+	} else {
+		// Accelerated domain without relay: direct dial with best IP
+		targetAddr := hostPort
+		if p.prober != nil {
+			bestIP := p.prober.GetBestIP(domain)
+			if bestIP != "" {
+				targetAddr = fmt.Sprintf("%s:%s", bestIP, port)
+			}
+		}
+		upstream, err = net.DialTimeout("tcp", targetAddr, 10*time.Second)
+		if err != nil {
+			conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+			return
+		}
 	}
 	defer upstream.Close()
 

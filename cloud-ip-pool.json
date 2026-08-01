@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "updated": "2026-08-01",
+  "sources": "community-verified IPs from DirectLink users",
+  "pools": {
+    "github.com": ["140.82.112.4", "140.82.114.4", "140.82.112.3", "20.205.243.166"],
+    "api.github.com": ["20.205.243.168"],
+    "codeload.github.com": ["140.82.112.4", "20.205.243.165"],
+    "live.github.com": ["140.82.114.26", "140.82.112.4"],
+    "collector.github.com": ["140.82.113.22", "140.82.112.4"],
+    "raw.githubusercontent.com": ["185.199.108.133", "185.199.109.133", "185.199.110.133", "185.199.111.133"],
+    "objects.githubusercontent.com": ["185.199.108.133", "185.199.109.133", "185.199.110.133", "185.199.111.133"],
+    "github.githubassets.com": ["185.199.108.215", "185.199.109.215", "185.199.110.215", "185.199.111.215"],
+    "github.io": ["185.199.108.153", "185.199.109.153", "185.199.110.153", "185.199.111.153"],
+    "store.steampowered.com": ["23.210.65.198", "23.15.141.198"],
+    "api.steampowered.com": ["184.85.84.68", "23.7.143.88"],
+    "steamcdn-a.akamaihd.net": ["23.32.91.8", "23.32.91.18"],
+    "community.akamai.steamstatic.com": ["23.32.91.7", "23.32.91.11"],
+    "cdn.akamai.steamstatic.com": ["23.32.91.8", "23.32.91.18"],
+    "cdn.cloudflare.steamstatic.com": ["184.28.7.164", "184.28.7.165"],
+    "login.steampowered.com": ["23.1.179.144", "184.85.84.68"]
+  }
+}

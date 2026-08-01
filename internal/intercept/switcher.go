@@ -74,8 +74,18 @@ func (s *Switcher) Start() error {
 		return fmt.Errorf("所有域名探测失败，请检查网络连接")
 	}
 
-	// Try hosts mode first (falls back to proxy internally)
-	s.enableHostsMode(results)
+	// If relay is configured, go straight to proxy mode (all traffic through SOCKS5)
+	// Otherwise, try hosts mode first (falls back to proxy internally)
+	s.mu.Lock()
+	hasRelay := s.proxy.socksDialer != nil
+	s.mu.Unlock()
+
+	if hasRelay {
+		logger.Info("检测到 SOCKS5 中转，直接使用代理模式（全量中转）")
+		s.enableProxyMode()
+	} else {
+		s.enableHostsMode(results)
+	}
 
 	// Verify that a mode was actually engaged
 	s.mu.Lock()
@@ -89,6 +99,9 @@ func (s *Switcher) Start() error {
 	// Hint to user about browser DNS cache
 	if mode == "hosts" {
 		logger.Info("提示：如页面仍打不开，请重启浏览器或使用无痕模式（浏览器有独立 DNS 缓存）")
+	}
+	if mode == "proxy" {
+		logger.Info("提示：代理模式已启动，所有加速域名通过 SOCKS5 中转")
 	}
 
 	// Start health check loop
